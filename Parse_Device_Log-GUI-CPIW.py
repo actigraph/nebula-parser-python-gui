@@ -1,6 +1,6 @@
 #####################################################################
 # Date Modified: 2023-07-12
-# Version: 3.0.1.1 (CHANGE BELOW IN CODE AS WELL!!!!)
+# Version: 3.0.1.5 (CHANGE BELOW IN CODE AS WELL!!!!)
 #
 # This script will take and parse all ".dat", i.e. log files, in
 # the folder where it is run and look for pegged acceleration data,
@@ -43,7 +43,7 @@ import struct
 pio.renderers.default = 'browser'  # this is to plot into default web broswer
 
 
-VERSION = '3.0.1.1'   # CHANGE ABOVE IN FILE DESCRIPTION!!!
+VERSION = '3.0.1.5'   # CHANGE ABOVE IN FILE DESCRIPTION!!!
 
 # ###########
 # # OPTIONS #
@@ -325,7 +325,16 @@ def import_temperature_calibration_values(temp_cal_file):
 
 import_temperature_calibration_values.calval_temperature = np.empty(12, int)
 
-def main_process(Log_Activity_Data, NoFilter, UseCalValues, basePath, begin_timestamp, end_timestamp):
+def ticks_to_unix(ticks):
+    # Calculate the difference between Unix epoch and .NET epoch
+    epoch_diff = datetime(1970, 1, 1) - datetime(1, 1, 1)
+    epoch_diff_ticks = epoch_diff.total_seconds() * 10 ** 7
+
+    # Calculate Unix timestamp
+    ticks_to_unix_timestamp = (ticks - epoch_diff_ticks) / 10 ** 7
+    return ticks_to_unix_timestamp
+
+def main_process(Log_Activity_Data, NoFilter, UseCalValues, zipfiles, basePath, begin_timestamp, end_timestamp):
 
     ####### Create Folder Structure ########################################################
     adxl_dir = '/Activity Files - Primary Accel/'
@@ -371,7 +380,7 @@ def main_process(Log_Activity_Data, NoFilter, UseCalValues, basePath, begin_time
                            'Activity records,Unexpected Resets,Expected Resets,Pegs,flat areas,'
                            'Timestamp Gaps\n')
 
-        zipfiles = 1
+        #zipfiles = 1
         if zipfiles:
             files = Path(basePath).glob('*.[ag][gt][d3][cx]')
             filetotal = len(fnmatch.filter(os.listdir(basePath), '*.agdc'))
@@ -398,7 +407,7 @@ def main_process(Log_Activity_Data, NoFilter, UseCalValues, basePath, begin_time
                     with zipfile.ZipFile(file, 'r') as zf:
                         zf.extract('log.bin', basePath)
                         if str(file).endswith('.agdc'):
-                            #zf.extract('calibration.json', basePath)
+                            zf.extract('calibration.json', basePath)
                             try:
                                 zf.extract('temperature_calibration.json', basePath)
                                 tempcalvals = import_temperature_calibration_values(basePath + '/temperature_calibration.json')
@@ -414,13 +423,24 @@ def main_process(Log_Activity_Data, NoFilter, UseCalValues, basePath, begin_time
                             except:
                                 temperatureCalibration = False
 
-                        zf.extract('info.json', basePath)
 
-                    with open(basePath + '/info.json', 'r') as info_file:
-                        jsonReader = json.load(info_file)
-                        firmware_version = jsonReader["firmware"]
-                        #target_start_time_unix = jsonReader["startDate"]
-                        downloadDate_unix = jsonReader["downloadDate"] + 86400
+                            zf.extract('info.json', basePath)
+
+                            with open(basePath + '/info.json', 'r') as info_file:
+                                jsonReader = json.load(info_file)
+                                firmware_version = jsonReader["firmware"]
+                                #target_start_time_unix = jsonReader["startDate"]
+                                downloadDate_unix = jsonReader["lastSampleTime"] + 86400
+                        else:
+                            zf.extract('info.txt',basePath)
+
+                            with open(basePath + '/info.txt', 'r') as info_file:
+                                for line in info_file:
+                                    if "Firmware" in line:
+                                        firmware_version = line[-6:].rstrip('\n')
+                                    if "Last Sample Time" in line:
+                                        number = int(line[-19:].rstrip('\n'))
+                                        downloadDate_unix = ticks_to_unix(number)
 
                     filetoopen = basePath + '/log.bin'
                 else:
@@ -508,6 +528,9 @@ def main_process(Log_Activity_Data, NoFilter, UseCalValues, basePath, begin_time
                     ##########################
                     # Start Parsing Log file #
                     ##########################
+                    if not(zipfiles):
+                        downloadDate_unix = int((datetime.now(tz=timezone.utc)- datetime.fromtimestamp(0, timezone.utc)).total_seconds())
+
                     for record in parse(fin, min_dateTime_unix, downloadDate_unix):
                         timestamp = record.timestamp.strftime(FMT)
                         unixTime = (record.timestamp - datetime.fromtimestamp(0, timezone.utc)).total_seconds()
@@ -544,7 +567,7 @@ def main_process(Log_Activity_Data, NoFilter, UseCalValues, basePath, begin_time
                                             '%-35s %-10s\n' % ('Invalid Record @ Position: ', str(address)))
                                     getInvalidRecordBytes = True
 
-                            eventList = [26, 27, 37, 36, 35, 33, 32, 31, 100]
+                            eventList = [0, 26, 27, 37, 36, 35, 33, 32, 31, 100]
 
                             if record.type in eventList and firstTimestampFound is False:
                                 firstTimestamp = record.timestamp
@@ -567,16 +590,14 @@ def main_process(Log_Activity_Data, NoFilter, UseCalValues, basePath, begin_time
                                 if i < 1:
                                     if record.type == 27:
                                         base_file = os.path.splitext(file)[0]
-                                        if os.path.isfile(base_file + '.cal') \
-                                                or os.path.isfile(base_file + '_calibration.json') \
-                                                and UseCalValues:
+                                        if os.path.isfile(base_file + '.cal') or os.path.isfile(basePath + '/calibration.json') and UseCalValues:
                                             FS = int(len(record.payload) / 2 / 4.5)
                                             isCalVals = True
                                             isCalibrated = True
                                             if os.path.isfile(base_file + '.cal'):
                                                 calvals = import_calibration_values(base_file + '.cal')
                                             else:
-                                                calvals = import_calibration_values(base_file + '_calibration.json')
+                                                calvals = import_calibration_values(basePath + '/calibration.json')
                                             txt032 = calvals[0:18]
                                             txt064 = calvals[18:36]
                                             txt128 = calvals[36:54]
@@ -660,15 +681,18 @@ def main_process(Log_Activity_Data, NoFilter, UseCalValues, basePath, begin_time
                                                 fout.write("%s," % timestamp)
                                                 timedelta_accel += current_timedelta_accel
                                                 fout.write("%.3f," % timedelta_accel)
-                                            if record.type == 27 or record.type == 0:  # Nebula or Moses
+                                            if record.type == 27:  # Nebula
                                                 r = h.readlist("int:n, int:n, int:n", n=12)
                                                 x, y, z = map(lambda f: f / 1, r)
                                                 if isCalVals:
                                                     V = np.array([[x], [y], [z]])
                                                     accel = np.dot(S, (V - O))
-                                                    x = float(accel[0, ...])
-                                                    y = float(accel[1, ...])
-                                                    z = float(accel[2, ...])
+                                                    x = float(accel[0][0])
+                                                    y = float(accel[1][0])
+                                                    z = float(accel[2][0])
+                                            elif record.type == 0: # Moses
+                                                r = h.readlist("int:n, int:n, int:n", n=12)
+                                                x, y, z = map(lambda t: t / 256.0, r)
                                             else:  # Taso
                                                 r = h.readlist("intle:n, intle:n, intle:n", n=16)
                                                 x, y, z = map(lambda t: t / 256.0, r)
@@ -888,11 +912,11 @@ def main_process(Log_Activity_Data, NoFilter, UseCalValues, basePath, begin_time
                                     sumFile.write(
                                         '%-35s %-15s %10s\n' % ('Unexpected Reset @ :', timestamp, str(unixTime)))
                                 elif record.payload == '08':
-                                    print('%-35s %-15s %10s' % ('ENTER IDLE SLEEP @ ', timestamp, str(unixTime)))
+                                    #print('%-35s %-15s %10s' % ('ENTER IDLE SLEEP @ ', timestamp, str(unixTime)))
                                     sumFile.write(
                                         '%-35s %-15s %10s\n' % ('ENTER IDLE SLEEP @ ', timestamp, str(unixTime)))
                                 elif record.payload == '09':
-                                    print('%-35s %-15s %10s' % ('EXIT IDLE SLEEP @ ', timestamp, str(unixTime)))
+                                    #print('%-35s %-15s %10s' % ('EXIT IDLE SLEEP @ ', timestamp, str(unixTime)))
                                     sumFile.write(
                                         '%-35s %-15s %10s\n' % ('EXIT IDLE SLEEP @ ', timestamp, str(unixTime)))
                                 else:
@@ -1021,12 +1045,21 @@ def main_process(Log_Activity_Data, NoFilter, UseCalValues, basePath, begin_time
                                     if firstFile:
                                         unixTimeFileFirst = (firstTimestamp - datetime.fromtimestamp(0,timezone.utc)).total_seconds()
                                         try:
-                                            os.rename(str(file) + '.csv', str(file) + '-' + str(int(unixTime)) + '.csv')
+                                            os.rename(outPutPath + adxl_dir + filename + '.csv',
+                                                      outPutPath + adxl_dir + filename + '-'
+                                                      + str(int(unixTimeFileFirst)) + '.csv')
                                         except:
-                                            os.remove(str(file) + '-' + str(int(unixTime)) + '.csv')
-                                            os.rename(str(file) + '.csv', str(file) + '-' + str(int(unixTime)) + '.csv')
+                                            os.remove(outPutPath + adxl_dir + filename + '-'
+                                                      + str(int(unixTimeFileFirst)) + '.csv')
+                                            os.rename(outPutPath + adxl_dir + filename + '.csv',
+                                                      outPutPath + adxl_dir + filename + '-'
+                                                      + str(int(unixTimeFileFirst)) + '.csv')
                                         firstFile = False
-                                    fout = open(str(file) + '-' + str(int(unixTime)) + '.csv', "w")
+                                    unixTimeFileNext = (record.timestamp - datetime.fromtimestamp(0,
+                                                                                                  timezone.utc)).total_seconds()
+                                    fout = open(outPutPath + adxl_dir + filename
+                                                + '-' + str(int(unixTimeFileNext)) + '.csv', "w")
+
                                     fout.write('ts,t,x,y,z,vm\n')
 
 
@@ -1149,7 +1182,10 @@ def the_gui():
             sg.FolderBrowse(),
         ],
         [sg.Listbox(values=[], enable_events=True, size=(40, 10), key="-FILE LIST-")],
-        [sg.Button("PARSE FILE(S)", size=(20, 4))],
+        [
+            sg.Button("PARSE FILE(S)", size=(20, 4)),
+            sg.Checkbox("agdc/gt3x files", default=True, key="ZIPFILES"),
+        ],
         [sg.Checkbox("Log Activity Data", default=False, key="LOGDATA")],
         [sg.Checkbox("Time/Date Filter", default=False, key="TIMEDATE")],
         [
@@ -1223,8 +1259,12 @@ def the_gui():
                 USE_CAL_VALUES = True
             else:
                 USE_CAL_VALUES = False
+            if values["ZIPFILES"]:
+                USE_ZIP_FILES = True
+            else:
+                USE_ZIP_FILES = False
 
-            t = Thread(target=main_process, args=(LOG_ACTIVITY_DATA, NO_FILTER, USE_CAL_VALUES,
+            t = Thread(target=main_process, args=(LOG_ACTIVITY_DATA, NO_FILTER, USE_CAL_VALUES, USE_ZIP_FILES,
                                                   values['-FOLDER-'],
                                                   values['first_timestamp'],
                                                   values['last_timestamp'], ), daemon=True)
