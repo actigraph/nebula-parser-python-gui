@@ -1,6 +1,6 @@
 #####################################################################
 # Date Modified: 2023-07-12
-# Version: 3.0.1 (CHANGE BELOW IN CODE AS WELL!!!!)
+# Version: 3.0.1.1 (CHANGE BELOW IN CODE AS WELL!!!!)
 #
 # This script will take and parse all ".dat", i.e. log files, in
 # the folder where it is run and look for pegged acceleration data,
@@ -43,7 +43,7 @@ import struct
 pio.renderers.default = 'browser'  # this is to plot into default web broswer
 
 
-VERSION = 'version 3.0.1'   # CHANGE ABOVE IN FILE DESCRIPTION!!!
+VERSION = '3.0.1.1'   # CHANGE ABOVE IN FILE DESCRIPTION!!!
 
 # ###########
 # # OPTIONS #
@@ -326,11 +326,28 @@ def import_temperature_calibration_values(temp_cal_file):
 import_temperature_calibration_values.calval_temperature = np.empty(12, int)
 
 def main_process(Log_Activity_Data, NoFilter, UseCalValues, basePath, begin_timestamp, end_timestamp):
-    directory0 = '/Activity Files - Primary Accel/'
-    directory1 = '/Time Gap Files/'
-    directory2 = '/Battery Logs/'
-    directory3 = '/Calibration Logs/'
-    directory4 = '/Epoch Files/'
+
+    ####### Create Folder Structure ########################################################
+    adxl_dir = '/Activity Files - Primary Accel/'
+    timeGap_dir = '/Time Gap Files/'
+    battery_dir = '/Battery Logs/'
+    temperature_dir = '/Temperature_Files/'
+    calibration_dir = '/Calibration Logs/'
+    output_dir = '/output_files/'
+    time_stamp_only_dir = 'ts_only/'
+    epoch_dir = '/Epoch Files/'
+
+    outPutPath = basePath + output_dir
+
+    Path(outPutPath + adxl_dir + time_stamp_only_dir).mkdir(parents=True, exist_ok=True)
+    Path(outPutPath + timeGap_dir).mkdir(parents=False, exist_ok=True)
+    Path(outPutPath + battery_dir).mkdir(parents=False, exist_ok=True)
+    Path(outPutPath + calibration_dir).mkdir(parents=False, exist_ok=True)
+    Path(outPutPath + temperature_dir).mkdir(parents=False, exist_ok=True)
+    Path(outPutPath + epoch_dir).mkdir(parents=False, exist_ok=True)
+
+
+    ###########################################################################################
 
     filenumber = 1
     temperatureCalibration = False
@@ -343,28 +360,13 @@ def main_process(Log_Activity_Data, NoFilter, UseCalValues, basePath, begin_time
     if end_timestamp != "":
         end_timestamp = datetime.fromtimestamp(int(end_timestamp), tz=timezone.utc)
 
-    if not os.path.exists(basePath + directory0):
-        os.makedirs(basePath + directory0)
-
-    if not os.path.exists(basePath + directory1):
-        os.makedirs(basePath + directory1)
-
-    if not os.path.exists(basePath + directory2):
-        os.makedirs(basePath + directory2)
-
-    if not os.path.exists(basePath + directory3):
-        os.makedirs(basePath + directory3)
-
-    if not os.path.exists(basePath + directory4):
-        os.makedirs(basePath + directory4)
-
     d = datetime.now()
-    with open(basePath + '/Parse_Summary_%s.txt' % d.strftime('%Y_%m_%d-%H_%M_%S'), "w") as sumFile:
+    with open(outPutPath + '/Parse_Summary_%s.txt' % d.strftime('%Y_%m_%d-%H_%M_%S'), "w") as sumFile:
 
         sumFile.write('APP_VERSION: %s\n\n' % VERSION)
         print('\nAPP_VERSION: %s\n' % VERSION)
         # Create and open Summary File #
-        fout_summary = open(basePath + directory3 + 'summary_file.csv', "w")
+        fout_summary = open(outPutPath + 'summary_file.csv', "w")
         fout_summary.write('filename,firmware version,First Activity Timestamp,Last Activity Timestamp,'
                            'Activity records,Unexpected Resets,Expected Resets,Pegs,flat areas,'
                            'Timestamp Gaps\n')
@@ -428,36 +430,36 @@ def main_process(Log_Activity_Data, NoFilter, UseCalValues, basePath, begin_time
                 firmware_version = "dat or bin file only"
 
             if not skip_file:
+                filename = Path(file).stem
                 with open(filetoopen, 'rb') as fin:
-                #with open(basePath + '/log.bin', 'rb') as fin:
                     if Log_Activity_Data:
-                        fout = open(basePath + directory0 + os.path.basename(file) + '.csv', "w")
+                        fout = open(outPutPath + adxl_dir + filename + '.csv', "w")
                         fout.write('ts,t,x,y,z,vm\n')
 
-                    adxl = open(basePath + directory0 + os.path.basename(file) + '_ts_only.csv', "w")
+                    adxl = open(outPutPath + adxl_dir + time_stamp_only_dir + filename + '_ts_only.csv', "w")
                     adxl.write('ts,record_length,Unix Timestamp\n')
 
                     # Create and open Timestamp Issue CSV File #
-                    fout1 = open(basePath + directory1 + os.path.basename(file)
+                    fout1 = open(outPutPath + timeGap_dir + filename
                                  + '_datetime_Gap.csv', "w")
 
                     # Create and open Battery Log CSV File #
-                    fout2 = open(basePath + directory2 + os.path.basename(file)
+                    fout2 = open(outPutPath + battery_dir + filename
                                  + 'battery_log.csv', "w")
                     fout2.write("Time Stamp,Batter_Voltage\n")
 
                     # Create and open Temperature Log CSV File #
-                    fout3 = open(basePath + directory2 + os.path.basename(file)
+                    fout3 = open(outPutPath + temperature_dir + filename
                                  + 'temperature_log.csv', "w")
                     fout3.write("Time Stamp,ADXL_Temp,STM32_Temp, STM32_CAL1, STM32CAL2\n")
 
                     # Create and open Epoch File Log CSV File #
-                    fout4 = open(basePath + directory4 + os.path.basename(file)
+                    fout4 = open(outPutPath + epoch_dir + filename
                                  + 'epoch.csv', "w")
                     fout4.write("Time Stamp,X, Y, Z\n")
 
-                    # Create and open Battery Log CSV File #
-                    fout_cal = open(basePath + directory3 + os.path.basename(file)
+                    # Create and open calibration Log CSV File #
+                    fout_cal = open(outPutPath + calibration_dir + filename
                                  + 'calibration_log.csv', "w")
                     fout_cal.write('ts,x,y,z\n')
 
@@ -1017,6 +1019,7 @@ def main_process(Log_Activity_Data, NoFilter, UseCalValues, basePath, begin_time
                                     numberRows = 0
                                     fout.close()
                                     if firstFile:
+                                        unixTimeFileFirst = (firstTimestamp - datetime.fromtimestamp(0,timezone.utc)).total_seconds()
                                         try:
                                             os.rename(str(file) + '.csv', str(file) + '-' + str(int(unixTime)) + '.csv')
                                         except:
@@ -1113,6 +1116,23 @@ def main_process(Log_Activity_Data, NoFilter, UseCalValues, basePath, begin_time
                     fout3.close()
                     fout_cal.close()
                     progress = 0
+                if zipfiles:
+                    try:
+                        os.remove(basePath + "/log.bin")
+                    except:
+                        pass
+                    try:
+                        os.remove(basePath + "/calibration.json")
+                    except:
+                        pass
+                    try:
+                        os.remove(basePath + "/info.json")
+                    except:
+                        pass
+                    try:
+                        os.remove(basePath + "/temperature_calibration.json")
+                    except:
+                        pass
     sumFile.close()
     fout_summary.close()
     print('FINISHED\n')
